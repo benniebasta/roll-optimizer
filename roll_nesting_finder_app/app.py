@@ -81,6 +81,15 @@ with tab2:
     OVERLAP = st.sidebar.number_input("Tile Overlap (cm)", value=1.0)
     ITERATIONS = st.sidebar.number_input("Optimization Passes", 20, 500, 150)
 
+    # ===============================
+    # AUTO ROTATE TOGGLE
+    # ===============================
+    AUTO_ROTATE = st.sidebar.toggle("🔄 Auto Rotate", value=False)
+    if AUTO_ROTATE:
+        st.sidebar.caption("ON → pieces may rotate 90° to use the least material.")
+    else:
+        st.sidebar.caption("OFF → pieces keep their given orientation.")
+
     st.sidebar.header("Panels")
     panel_count = st.sidebar.number_input("Number of different panels", 1, 50, 5)
 
@@ -102,17 +111,25 @@ with tab2:
                 return (w + (n - 1) * OVERLAP) / n, n
         return None, None
 
-    def expand(jobs):
+    def expand(jobs, auto_rotate):
         pieces = []
         for pid, w, h, q in jobs:
             tile_w, n = tile_width_only(w, ROLL_WIDTH)
             if tile_w is None:
                 return None
+
+            # Auto Rotate OFF -> single fixed orientation (same logic as before, no rotation)
+            # Auto Rotate ON  -> allow 90° rotation, packer picks the best fit
+            if auto_rotate:
+                orientations = [(tile_w, h), (h, tile_w)]
+            else:
+                orientations = [(tile_w, h)]
+
             for _ in range(q):
                 for _ in range(n):
                     pieces.append({
                         "pid": pid,
-                        "orientations": [(tile_w, h), (h, tile_w)]
+                        "orientations": orientations
                     })
         return pieces
 
@@ -174,14 +191,15 @@ with tab2:
     # RUN
     # =========================================
     if st.button("Run RIP Optimizer"):
-        pieces = expand(jobs)
+        pieces = expand(jobs, AUTO_ROTATE)
         if not pieces:
             st.error("❌ Some panels cannot fit the roll width.")
             st.stop()
 
         best, total = optimize(pieces)
 
-        st.success(f"✅ RIP-Optimized Fabric Length = {total/100:.2f} meters")
+        mode = "Auto Rotate ON" if AUTO_ROTATE else "Auto Rotate OFF"
+        st.success(f"✅ RIP-Optimized Fabric Length = {total/100:.2f} meters  ({mode})")
 
         df = pd.DataFrame([(p,w,h) for p,_,_,w,h in best],
                           columns=["Panel","Tile Width","Tile Height"])
