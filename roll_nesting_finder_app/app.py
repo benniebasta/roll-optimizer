@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import itertools
 import random
 
 # ===============================
@@ -86,9 +87,9 @@ with tab2:
     # ===============================
     AUTO_ROTATE = st.sidebar.toggle("🔄 Auto Rotate", value=False)
     if AUTO_ROTATE:
-        st.sidebar.caption("ON → pieces may rotate 90° to use the least material.")
+        st.sidebar.caption("ON → tries rotating panels 90° to use the least material.")
     else:
-        st.sidebar.caption("OFF → pieces keep their given orientation.")
+        st.sidebar.caption("OFF → panels keep their given orientation.")
 
     st.sidebar.header("Panels")
     panel_count = st.sidebar.number_input("Number of different panels", 1, 50, 5)
@@ -111,30 +112,8 @@ with tab2:
                 return (w + (n - 1) * OVERLAP) / n, n
         return None, None
 
-    def expand(jobs, auto_rotate):
-        pieces = []
-        for pid, w, h, q in jobs:
-            tile_w, n = tile_width_only(w, ROLL_WIDTH)
-            if tile_w is None:
-                return None
-
-            # Auto Rotate OFF -> single fixed orientation (same logic as before, no rotation)
-            # Auto Rotate ON  -> allow 90° rotation, packer picks the best fit
-            if auto_rotate:
-                orientations = [(tile_w, h), (h, tile_w)]
-            else:
-                orientations = [(tile_w, h)]
-
-            for _ in range(q):
-                for _ in range(n):
-                    pieces.append({
-                        "pid": pid,
-                        "orientations": orientations
-                    })
-        return pieces
-
     # =========================================
-    # GUILLOTINE PACKER
+    # GUILLOTINE PACKER  (UNCHANGED)
     # =========================================
     def pack(pieces):
         free = [(0, 0, ROLL_WIDTH, 10000)]
@@ -167,11 +146,27 @@ with tab2:
         return placed
 
     def length(placed):
+        if not placed:
+            return 0
         return max(y + h for _, _, y, _, h in placed)
 
     # =========================================
-    # ANNEALING MULTI-PASS
+    # OFF PATH  (EXACT ORIGINAL LOGIC — NO ROTATION)
     # =========================================
+    def expand(jobs):
+        pieces = []
+        for pid, w, h, q in jobs:
+            tile_w, n = tile_width_only(w, ROLL_WIDTH)
+            if tile_w is None:
+                return None
+            for _ in range(q):
+                for _ in range(n):
+                    pieces.append({
+                        "pid": pid,
+                        "orientations": [(tile_w, h)]   # fixed orientation
+                    })
+        return pieces
+
     def optimize(pieces):
         best_len = None
         best_layout = None
@@ -188,25 +183,101 @@ with tab2:
         return best_layout, best_len
 
     # =========================================
+    # ON PATH  (AUTO ROTATE — searches orientations)
+    # =========================================
+    def build_groups(jobs):
+        """One group per panel, holding every orientation that physically fits the roll."""
+        groups = []
+        for pid, w, h, q in jobs:
+            tile_w, n = tile_width_only(w, ROLL_WIDTH)
+            if tile_w is None:
+                return None
+
+            # across-roll dimension must be <= ROLL_WIDTH to be valid
+            orients = [(tile_w, h)]
+            if h <= ROLL_WIDTH and abs(h - tile_w) > 1e-9:
+                orients.append((h, tile_w))   # rotated 90°
+
+            groups.append({"pid": pid, "orients": orients, "count": q * n})
+        return groups
+
+    def optimize_rotate(groups):
+        """
+        Try whole-job orientation combinations (each panel normal OR rotated),
+        pack each one, and keep the layout with the SHORTEST total fabric length.
+        Rotation is judged by real material used, not by per-piece area.
+        """
+        option_lists = [g["orients"] for g in groups]
+        all_combos = list(itertools.product(*option_lists))
+
+        # Always test the two extreme seeds, then sample the rest if there are too many.
+        seeds = [
+            tuple(opts[0] for opts in option_lists),    # all normal
+            tuple(opts[-1] for opts in option_lists),   # all rotated where possible
+        ]
+        if len(all_combos) > ITERATIONS:
+            sampled = random.sample(all_combos, int(ITERATIONS))
+            combos = list({*seeds, *sampled})
+        else:
+            combos = all_combos
+
+        passes = max(1, int(ITERATIONS) // max(1, len(combos)))
+
+        best_len = None
+        best_layout = None
+
+        for combo in combos:
+            # lock every panel to its chosen orientation for this combo
+            base = []
+            for g, (w, h) in zip(groups, combo):
+                for _ in range(g["count"]):
+                    base.append({"pid": g["pid"], "orientations": [(w, h)]})
+
+            for _ in range(passes):
+                random.shuffle(base)
+                layout = pack(base)
+                if layout:
+                    l = length(layout)
+                    if best_len is None or l < best_len:
+                        best_len = l
+                        best_layout = layout
+
+        return best_layout, best_len
+
+    # =========================================
     # RUN
     # =========================================
     if st.button("Run RIP Optimizer"):
-        pieces = expand(jobs, AUTO_ROTATE)
-        if not pieces:
-            st.error("❌ Some panels cannot fit the roll width.")
+        if not jobs:
+            st.error("❌ Add at least one panel with width, height and quantity.")
             st.stop()
 
-        best, total = optimize(pieces)
+        if AUTO_ROTATE:
+            groups = build_groups(jobs)
+            if groups is None:
+                st.error("❌ Some panels cannot fit the roll width.")
+                st.stop()
+            best, total = optimize_rotate(groups)
+        else:
+            pieces = expand(jobs)
+            if not pieces:
+                st.error("❌ Some panels cannot fit the roll width.")
+                st.stop()
+            best, total = optimize(pieces)
+
+        if not best:
+            st.error("❌ Could not produce a layout.")
+            st.stop()
 
         mode = "Auto Rotate ON" if AUTO_ROTATE else "Auto Rotate OFF"
         st.success(f"✅ RIP-Optimized Fabric Length = {total/100:.2f} meters  ({mode})")
 
-        df = pd.DataFrame([(p,w,h) for p,_,_,w,h in best],
-                          columns=["Panel","Tile Width","Tile Height"])
+        df = pd.DataFrame([(p, w, h) for p, _, _, w, h in best],
+                          columns=["Panel", "Tile Width", "Tile Height"])
         st.dataframe(df, use_container_width=True)
 
         # ===== Visualization =====
-        fig, ax = plt.subplots(figsize=(14,8))
+        fig, ax = plt.subplots(figsize=(14, 8))
         colors = {}
 
         for pid, x, y, w, h in best:
@@ -214,8 +285,8 @@ with tab2:
                 colors[pid] = (random.random(), random.random(), random.random())
             ax.add_patch(plt.Rectangle((y, x), h, w, facecolor=colors[pid], edgecolor="black"))
             ax.text(
-                y + h/2,
-                x + w/2,
+                y + h / 2,
+                x + w / 2,
                 f"{pid}\n{w:.0f}×{h:.0f}",
                 ha="center",
                 va="center",
