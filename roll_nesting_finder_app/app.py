@@ -99,9 +99,9 @@ with tab2:
         st.sidebar.markdown(f"### Panel {i}")
         w = st.sidebar.number_input(f"W{i} (cm)", 0.0, key=f"w{i}")
         h = st.sidebar.number_input(f"H{i} (cm)", 0.0, key=f"h{i}")
-        q = st.sidebar.number_input(f"Qty{i}", min_value=0, max_value=None, value=0, key=f"q{i}")
+        q = st.sidebar.number_input(f"Qty{i}", min_value=0.0, max_value=None, value=0.0, step=1.0, key=f"q{i}")
         if w > 0 and h > 0 and q > 0:
-            jobs.append((i, w, h, q))
+            jobs.append((i, w, h, int(round(q))))
 
     # =========================================
     # TILING
