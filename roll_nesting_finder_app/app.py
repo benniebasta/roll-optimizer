@@ -183,11 +183,15 @@ with tab2:
         return best_layout, best_len
 
     # =========================================
-    # ON PATH  (AUTO ROTATE — searches orientations)
+    # ON PATH  (AUTO ROTATE — packer chooses per piece)
     # =========================================
-    def build_groups(jobs):
-        """One group per panel, holding every orientation that physically fits the roll."""
-        groups = []
+    def expand_rotate(jobs):
+        """
+        Like expand(), but every piece carries BOTH orientations.
+        The packer then rotates each piece individually whenever
+        the rotated fit wastes less material.
+        """
+        pieces = []
         for pid, w, h, q in jobs:
             tile_w, n = tile_width_only(w, ROLL_WIDTH)
             if tile_w is None:
@@ -198,51 +202,9 @@ with tab2:
             if h <= ROLL_WIDTH and abs(h - tile_w) > 1e-9:
                 orients.append((h, tile_w))   # rotated 90°
 
-            groups.append({"pid": pid, "orients": orients, "count": q * n})
-        return groups
-
-    def optimize_rotate(groups):
-        """
-        Try whole-job orientation combinations (each panel normal OR rotated),
-        pack each one, and keep the layout with the SHORTEST total fabric length.
-        Rotation is judged by real material used, not by per-piece area.
-        """
-        option_lists = [g["orients"] for g in groups]
-        all_combos = list(itertools.product(*option_lists))
-
-        # Always test the two extreme seeds, then sample the rest if there are too many.
-        seeds = [
-            tuple(opts[0] for opts in option_lists),    # all normal
-            tuple(opts[-1] for opts in option_lists),   # all rotated where possible
-        ]
-        if len(all_combos) > ITERATIONS:
-            sampled = random.sample(all_combos, int(ITERATIONS))
-            combos = list({*seeds, *sampled})
-        else:
-            combos = all_combos
-
-        passes = max(1, int(ITERATIONS) // max(1, len(combos)))
-
-        best_len = None
-        best_layout = None
-
-        for combo in combos:
-            # lock every panel to its chosen orientation for this combo
-            base = []
-            for g, (w, h) in zip(groups, combo):
-                for _ in range(g["count"]):
-                    base.append({"pid": g["pid"], "orientations": [(w, h)]})
-
-            for _ in range(passes):
-                random.shuffle(base)
-                layout = pack(base)
-                if layout:
-                    l = length(layout)
-                    if best_len is None or l < best_len:
-                        best_len = l
-                        best_layout = layout
-
-        return best_layout, best_len
+            for _ in range(q * n):
+                pieces.append({"pid": pid, "orientations": orients})
+        return pieces
 
     # =========================================
     # RUN
@@ -253,11 +215,11 @@ with tab2:
             st.stop()
 
         if AUTO_ROTATE:
-            groups = build_groups(jobs)
-            if groups is None:
+            pieces = expand_rotate(jobs)
+            if not pieces:
                 st.error("❌ Some panels cannot fit the roll width.")
                 st.stop()
-            best, total = optimize_rotate(groups)
+            best, total = optimize(pieces)
         else:
             pieces = expand(jobs)
             if not pieces:
