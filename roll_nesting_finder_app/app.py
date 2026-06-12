@@ -9,7 +9,7 @@ import random
 # ===============================
 st.set_page_config(page_title="AD ON RIP Optimizer", layout="wide")
 st.title("🖨 AD ON Roll Optimizer + RIP Nesting")
-st.caption("AD ON Exhibition / Display GURU")
+st.caption("AD ON Exhibition / Display GURU — v2 (per-piece auto rotate)")
 
 # ===============================
 # AVAILABLE ROLL WIDTHS
@@ -233,6 +233,29 @@ with tab2:
 
         mode = "Auto Rotate ON" if AUTO_ROTATE else "Auto Rotate OFF"
         st.success(f"✅ RIP-Optimized Fabric Length = {total/100:.2f} meters  ({mode})")
+
+        if AUTO_ROTATE:
+            # Count how many placed pieces ended up rotated vs. their normal orientation
+            normal_dims = {}
+            rotatable = set()
+            for pid, jw, jh, jq in jobs:
+                tw, _n = tile_width_only(jw, ROLL_WIDTH)
+                normal_dims[pid] = (round(tw, 3), round(jh, 3))
+                if jh <= ROLL_WIDTH and abs(jh - tw) > 1e-9:
+                    rotatable.add(pid)
+
+            rotated = sum(
+                1 for pid, _x, _y, pw, ph in best
+                if (round(pw, 3), round(ph, 3)) != normal_dims[pid]
+            )
+            if not rotatable:
+                st.warning("⚠️ None of your panels CAN rotate: their height is wider "
+                           "than the roll, so only the normal orientation fits.")
+            elif rotated == 0:
+                st.info("ℹ️ Rotation was tested, but the normal orientation gave the "
+                        "shortest fabric for this job — 0 pieces rotated.")
+            else:
+                st.info(f"🔄 {rotated} of {len(best)} pieces were rotated 90° to save material.")
 
         df = pd.DataFrame([(p, w, h) for p, _, _, w, h in best],
                           columns=["Panel", "Tile Width", "Tile Height"])
