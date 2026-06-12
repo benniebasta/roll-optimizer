@@ -21,14 +21,18 @@ ROLL_WIDTHS = [
 ]
 
 # ===============================
-# APP TABS
+# MAIN NAVIGATION
 # ===============================
-tab1, tab2 = st.tabs(["📏 Roll Finder", "🖨 RIP Optimizer"])
+page = st.sidebar.radio(
+    "📂 Navigation",
+    ["📏 Roll Finder", "🖨 RIP Optimizer"]
+)
+st.sidebar.divider()
 
 # ============================================================
-# TAB 1 : MATERIAL WIDTH FINDER
+# PAGE 1 : MATERIAL WIDTH FINDER
 # ============================================================
-with tab1:
+if page == "📏 Roll Finder":
     st.header("📏 Material Width Optimizer")
 
     w = st.number_input("Artwork Width (cm)", min_value=1.0)
@@ -69,15 +73,16 @@ with tab1:
             ])
             st.dataframe(df, use_container_width=True)
 
-            st.info("👉 Pick the best Roll Width and use it in the RIP Optimizer tab.")
+            st.info("👉 Pick the best Roll Width and use it in the RIP Optimizer page.")
 
 # ============================================================
-# TAB 2 : RIP NESTING OPTIMIZER
+# PAGE 2 : RIP NESTING OPTIMIZER
 # ============================================================
-with tab2:
+else:
 
     st.header("🖨 RIP-Grade Guillotine Optimizer")
 
+    st.sidebar.header("⚙️ Settings")
     ROLL_WIDTH = st.sidebar.number_input("Roll Width (cm)", value=137.0)
     OVERLAP = st.sidebar.number_input("Tile Overlap (cm)", value=1.0)
     ITERATIONS = st.sidebar.number_input("Optimization Passes", 20, 500, 150)
