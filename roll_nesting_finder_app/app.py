@@ -7,81 +7,9 @@ import random
 # ===============================
 # PAGE CONFIG
 # ===============================
-st.set_page_config(page_title="AD ON RIP Optimizer", page_icon="🖨", layout="wide")
-
-# ===============================
-# CUSTOM STYLE
-# ===============================
-st.markdown("""
-<style>
-/* Main header banner */
-.adon-header {
-    background: linear-gradient(135deg, #1a2a6c 0%, #2a4d9b 50%, #00b4d8 100%);
-    padding: 1.6rem 2rem;
-    border-radius: 16px;
-    margin-bottom: 1.2rem;
-}
-.adon-header h1 {
-    color: white;
-    margin: 0;
-    font-size: 2rem;
-}
-.adon-header p {
-    color: #cfe8ff;
-    margin: 0.3rem 0 0 0;
-    font-size: 1rem;
-}
-
-/* Metric cards */
-div[data-testid="stMetric"] {
-    background: #f6f9ff;
-    border: 1px solid #dce6f5;
-    border-radius: 14px;
-    padding: 14px 18px;
-    box-shadow: 0 2px 6px rgba(26, 42, 108, 0.07);
-}
-div[data-testid="stMetricValue"] {
-    color: #1a2a6c;
-}
-
-/* Buttons */
-.stButton > button {
-    background: linear-gradient(135deg, #1a2a6c, #00b4d8);
-    color: white;
-    border: none;
-    border-radius: 10px;
-    padding: 0.6rem 1.6rem;
-    font-weight: 600;
-    transition: 0.2s;
-}
-.stButton > button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 14px rgba(0, 180, 216, 0.45);
-    color: white;
-}
-
-/* Sidebar */
-section[data-testid="stSidebar"] {
-    background: #f4f7fc;
-}
-
-/* Dataframe corners */
-div[data-testid="stDataFrame"] {
-    border-radius: 12px;
-    overflow: hidden;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ===============================
-# HEADER
-# ===============================
-st.markdown("""
-<div class="adon-header">
-    <h1>🖨 AD ON Roll Optimizer + RIP Nesting</h1>
-    <p>AD ON Exhibition / Display GURU</p>
-</div>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="AD ON RIP Optimizer", layout="wide")
+st.title("🖨 AD ON Roll Optimizer + RIP Nesting")
+st.caption("AD ON Exhibition / Display GURU")
 
 # ===============================
 # AVAILABLE ROLL WIDTHS
@@ -92,17 +20,12 @@ ROLL_WIDTHS = [
     257, 260, 310, 320
 ]
 
-# Fixed pleasant colors for the layout drawing
-PALETTE = plt.cm.tab20.colors
-
 # ===============================
 # MAIN NAVIGATION
 # ===============================
-st.sidebar.markdown("## 📂 Navigation")
 page = st.sidebar.radio(
-    "Choose a tool",
-    ["📏 Roll Finder", "🖨 RIP Optimizer"],
-    label_visibility="collapsed"
+    "📂 Navigation",
+    ["📏 Roll Finder", "🖨 RIP Optimizer"]
 )
 st.sidebar.divider()
 
@@ -110,14 +33,10 @@ st.sidebar.divider()
 # PAGE 1 : MATERIAL WIDTH FINDER
 # ============================================================
 if page == "📏 Roll Finder":
-    st.subheader("📏 Material Width Optimizer")
-    st.caption("Enter your artwork size to find the roll width with the least waste.")
+    st.header("📏 Material Width Optimizer")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        w = st.number_input("Artwork Width (cm)", min_value=1.0)
-    with c2:
-        h = st.number_input("Artwork Height (cm)", min_value=1.0)
+    w = st.number_input("Artwork Width (cm)", min_value=1.0)
+    h = st.number_input("Artwork Height (cm)", min_value=1.0)
 
     def find_top10(art_w, art_h):
         results = []
@@ -140,26 +59,18 @@ if page == "📏 Roll Finder":
         results.sort(key=lambda x: (x[3], x[0]))
         return results[:10]
 
-    if st.button("🔍 Find Best Roll Width"):
+    if st.button("Find Best Roll Width"):
         top10 = find_top10(w, h)
 
         if not top10:
             st.error("❌ This artwork does not fit any roll.")
         else:
-            best_roll, best_orient, best_len, best_waste = top10[0]
-
-            m1, m2, m3 = st.columns(3)
-            m1.metric("🏆 Best Roll", f"{best_roll} cm")
-            m2.metric("Orientation", best_orient)
-            m3.metric("Waste", f"{best_waste/10000:.2f} m²")
-
             df = pd.DataFrame(top10, columns=[
                 "Roll Width (cm)",
                 "Orientation",
                 "Used Length (cm)",
                 "Waste Area (cm²)"
             ])
-            df.index = range(1, len(df) + 1)
             st.dataframe(df, use_container_width=True)
 
             st.info("👉 Pick the best Roll Width and use it in the RIP Optimizer page.")
@@ -169,33 +80,33 @@ if page == "📏 Roll Finder":
 # ============================================================
 else:
 
-    st.subheader("🖨 RIP-Grade Guillotine Optimizer")
-    st.caption("Set your roll and panels in the sidebar, then run the optimizer.")
+    st.header("🖨 RIP-Grade Guillotine Optimizer")
 
-    st.sidebar.markdown("## ⚙️ Settings")
+    st.sidebar.header("⚙️ Settings")
     ROLL_WIDTH = st.sidebar.number_input("Roll Width (cm)", value=137.0)
     OVERLAP = st.sidebar.number_input("Tile Overlap (cm)", value=1.0)
     ITERATIONS = st.sidebar.number_input("Optimization Passes", 20, 500, 150)
 
+    # ===============================
+    # AUTO ROTATE TOGGLE
+    # ===============================
     AUTO_ROTATE = st.sidebar.toggle("🔄 Auto Rotate", value=False)
     if AUTO_ROTATE:
         st.sidebar.caption("ON → tries rotating panels 90° to use the least material.")
     else:
         st.sidebar.caption("OFF → panels keep their given orientation.")
 
-    st.sidebar.divider()
-    st.sidebar.markdown("## 🧩 Panels")
+    st.sidebar.header("Panels")
     panel_count = st.sidebar.number_input("Number of different panels", 1, 50, 5)
 
     jobs = []
     for i in range(1, panel_count + 1):
-        with st.sidebar.expander(f"Panel {i}", expanded=(i == 1)):
-            w = st.number_input(f"Width (cm)", 0.0, key=f"w{i}")
-            h = st.number_input(f"Height (cm)", 0.0, key=f"h{i}")
-            q = st.number_input(f"Quantity", min_value=0.0, max_value=None, value=0.0, step=1.0, key=f"q{i}")
-            if w > 0 and h > 0 and q > 0:
-                jobs.append((i, w, h, int(round(q))))
-                st.caption(f"✅ {int(round(q))} × {w:g}×{h:g} cm")
+        st.sidebar.markdown(f"### Panel {i}")
+        w = st.sidebar.number_input(f"W{i} (cm)", 0.0, key=f"w{i}")
+        h = st.sidebar.number_input(f"H{i} (cm)", 0.0, key=f"h{i}")
+        q = st.sidebar.number_input(f"Qty{i}", min_value=0.0, max_value=None, value=0.0, step=1.0, key=f"q{i}")
+        if w > 0 and h > 0 and q > 0:
+            jobs.append((i, w, h, int(round(q))))
 
     # =========================================
     # TILING
@@ -245,7 +156,7 @@ else:
         return max(y + h for _, _, y, _, h in placed)
 
     # =========================================
-    # OFF PATH  (NO ROTATION)
+    # OFF PATH  (EXACT ORIGINAL LOGIC — NO ROTATION)
     # =========================================
     def expand(jobs):
         pieces = []
@@ -257,7 +168,7 @@ else:
                 for _ in range(n):
                     pieces.append({
                         "pid": pid,
-                        "orientations": [(tile_w, h)]
+                        "orientations": [(tile_w, h)]   # fixed orientation
                     })
         return pieces
 
@@ -277,29 +188,37 @@ else:
         return best_layout, best_len
 
     # =========================================
-    # ON PATH  (AUTO ROTATE)
+    # ON PATH  (AUTO ROTATE — searches orientations)
     # =========================================
     def build_groups(jobs):
+        """One group per panel, holding every orientation that physically fits the roll."""
         groups = []
         for pid, w, h, q in jobs:
             tile_w, n = tile_width_only(w, ROLL_WIDTH)
             if tile_w is None:
                 return None
 
+            # across-roll dimension must be <= ROLL_WIDTH to be valid
             orients = [(tile_w, h)]
             if h <= ROLL_WIDTH and abs(h - tile_w) > 1e-9:
-                orients.append((h, tile_w))
+                orients.append((h, tile_w))   # rotated 90°
 
             groups.append({"pid": pid, "orients": orients, "count": q * n})
         return groups
 
     def optimize_rotate(groups):
+        """
+        Try whole-job orientation combinations (each panel normal OR rotated),
+        pack each one, and keep the layout with the SHORTEST total fabric length.
+        Rotation is judged by real material used, not by per-piece area.
+        """
         option_lists = [g["orients"] for g in groups]
         all_combos = list(itertools.product(*option_lists))
 
+        # Always test the two extreme seeds, then sample the rest if there are too many.
         seeds = [
-            tuple(opts[0] for opts in option_lists),
-            tuple(opts[-1] for opts in option_lists),
+            tuple(opts[0] for opts in option_lists),    # all normal
+            tuple(opts[-1] for opts in option_lists),   # all rotated where possible
         ]
         if len(all_combos) > ITERATIONS:
             sampled = random.sample(all_combos, int(ITERATIONS))
@@ -313,6 +232,7 @@ else:
         best_layout = None
 
         for combo in combos:
+            # lock every panel to its chosen orientation for this combo
             base = []
             for g, (w, h) in zip(groups, combo):
                 for _ in range(g["count"]):
@@ -332,84 +252,57 @@ else:
     # =========================================
     # RUN
     # =========================================
-    if st.button("🚀 Run RIP Optimizer"):
+    if st.button("Run RIP Optimizer"):
         if not jobs:
             st.error("❌ Add at least one panel with width, height and quantity.")
             st.stop()
 
-        with st.spinner("Optimizing layout…"):
-            if AUTO_ROTATE:
-                groups = build_groups(jobs)
-                if groups is None:
-                    st.error("❌ Some panels cannot fit the roll width.")
-                    st.stop()
-                best, total = optimize_rotate(groups)
-            else:
-                pieces = expand(jobs)
-                if not pieces:
-                    st.error("❌ Some panels cannot fit the roll width.")
-                    st.stop()
-                best, total = optimize(pieces)
+        if AUTO_ROTATE:
+            groups = build_groups(jobs)
+            if groups is None:
+                st.error("❌ Some panels cannot fit the roll width.")
+                st.stop()
+            best, total = optimize_rotate(groups)
+        else:
+            pieces = expand(jobs)
+            if not pieces:
+                st.error("❌ Some panels cannot fit the roll width.")
+                st.stop()
+            best, total = optimize(pieces)
 
         if not best:
             st.error("❌ Could not produce a layout.")
             st.stop()
 
-        # ===== Result metrics =====
-        used_area = sum(w * h for _, _, _, w, h in best)
-        roll_area = ROLL_WIDTH * total
-        utilization = used_area / roll_area * 100 if roll_area else 0
         mode = "Auto Rotate ON" if AUTO_ROTATE else "Auto Rotate OFF"
+        st.success(f"✅ RIP-Optimized Fabric Length = {total/100:.2f} meters  ({mode})")
 
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("📏 Fabric Length", f"{total/100:.2f} m")
-        m2.metric("🧩 Pieces Placed", f"{len(best)}")
-        m3.metric("📊 Material Used", f"{utilization:.1f} %")
-        m4.metric("🔄 Mode", mode.replace("Auto Rotate ", ""))
+        df = pd.DataFrame([(p, w, h) for p, _, _, w, h in best],
+                          columns=["Panel", "Tile Width", "Tile Height"])
+        st.dataframe(df, use_container_width=True)
 
-        # ===== Layout drawing =====
-        st.markdown("#### 🗺 Nesting Layout")
-        fig, ax = plt.subplots(figsize=(14, 6))
-        fig.patch.set_facecolor("#f6f9ff")
-        ax.set_facecolor("white")
+        # ===== Visualization =====
+        fig, ax = plt.subplots(figsize=(14, 8))
         colors = {}
 
         for pid, x, y, w, h in best:
             if pid not in colors:
-                colors[pid] = PALETTE[(pid - 1) % len(PALETTE)]
-            ax.add_patch(plt.Rectangle(
-                (y, x), h, w,
-                facecolor=colors[pid],
-                edgecolor="#1a2a6c",
-                linewidth=1.2,
-                alpha=0.9
-            ))
+                colors[pid] = (random.random(), random.random(), random.random())
+            ax.add_patch(plt.Rectangle((y, x), h, w, facecolor=colors[pid], edgecolor="black"))
             ax.text(
                 y + h / 2,
                 x + w / 2,
-                f"P{pid}\n{w:.0f}×{h:.0f}",
+                f"{pid}\n{w:.0f}×{h:.0f}",
                 ha="center",
                 va="center",
                 fontsize=8,
-                weight="bold",
-                color="#1a2a6c"
+                weight="bold"
             )
 
         ax.set_xlim(0, total)
         ax.set_ylim(0, ROLL_WIDTH)
-        ax.set_xlabel("Fabric Length (cm)", fontsize=11, color="#1a2a6c")
-        ax.set_ylabel("Roll Width (cm)", fontsize=11, color="#1a2a6c")
-        ax.set_title(f"RIP-Grade Guillotine Nesting — Roll {ROLL_WIDTH:g} cm",
-                     fontsize=13, weight="bold", color="#1a2a6c")
-        ax.grid(True, linestyle="--", alpha=0.3)
-        ax.set_axisbelow(True)
+        ax.set_xlabel("Fabric Length (cm)")
+        ax.set_ylabel("Roll Width (cm)")
+        ax.set_title("RIP-Grade Guillotine Nesting")
 
         st.pyplot(fig)
-
-        # ===== Cut list =====
-        st.markdown("#### 📋 Cut List")
-        df = pd.DataFrame([(f"P{p}", w, h) for p, _, _, w, h in best],
-                          columns=["Panel", "Tile Width (cm)", "Tile Height (cm)"])
-        summary = df.groupby(["Panel", "Tile Width (cm)", "Tile Height (cm)"]) \
-                    .size().reset_index(name="Count")
-        st.dataframe(summary, use_container_width=True)
