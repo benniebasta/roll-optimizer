@@ -7,9 +7,7 @@ import random
 # ===============================
 # PAGE CONFIG
 # ===============================
-st.set_page_config(page_title="AD ON RIP Optimizer", layout="wide")
-st.title("🖨 AD ON Roll Optimizer + RIP Nesting")
-st.caption("AD ON Exhibition / Display GURU")
+st.set_page_config(page_title="Roll Optimizer", layout="wide")
 
 # ===============================
 # AVAILABLE ROLL WIDTHS
@@ -25,14 +23,14 @@ ROLL_WIDTHS = [
 # ===============================
 page = st.sidebar.radio(
     "📂 Navigation",
-    ["📏 Roll Finder", "🖨 RIP Optimizer"]
+    ["Roll Optimizer", "RigidBoard Optimizer", "Roll Finder"]
 )
 st.sidebar.divider()
 
 # ============================================================
 # PAGE 1 : MATERIAL WIDTH FINDER
 # ============================================================
-if page == "📏 Roll Finder":
+if page == "Roll Finder":
     st.header("📏 Material Width Optimizer")
 
     w = st.number_input("Artwork Width (cm)", min_value=1.0)
@@ -78,7 +76,7 @@ if page == "📏 Roll Finder":
 # ============================================================
 # PAGE 2 : RIP NESTING OPTIMIZER
 # ============================================================
-else:
+elif page == "Roll Optimizer":
 
     st.header("🖨 RIP-Grade Guillotine Optimizer")
 
@@ -306,3 +304,276 @@ else:
         ax.set_title("RIP-Grade Guillotine Nesting")
 
         st.pyplot(fig)
+
+# ============================================================
+# PAGE 3 : RIGID BOARD OPTIMIZER
+# ============================================================
+else:
+
+    st.header("🪟 Rigid Board Nesting Optimizer")
+    st.caption("PP board • Foam board • PlastWood • Acrylic • Cardboard • Dibond • Correx …")
+
+    # ---------------------------------------------------------
+    # BOARD / SHEET SETTINGS
+    # ---------------------------------------------------------
+    st.sidebar.header("⚙️ Board Settings")
+    BOARD_W = st.sidebar.number_input("Board Width (cm)", min_value=1.0, value=240.0)
+    BOARD_H = st.sidebar.number_input("Board Height (cm)", min_value=1.0, value=120.0)
+    st.sidebar.caption("Default = 240 × 120 cm sheet.")
+
+    GAP = st.sidebar.number_input("Cut Gap between pieces (cm)", min_value=0.0, value=0.3, step=0.1)
+
+    R_AUTO_ROTATE = st.sidebar.toggle("🔄 Auto Rotate", value=True)
+    if R_AUTO_ROTATE:
+        st.sidebar.caption("ON → pieces may rotate 90° to fit more per board.")
+    else:
+        st.sidebar.caption("OFF → pieces keep their given orientation.")
+
+    # A virtual gap-inflated board so the cut gap also sits between adjacent
+    # pieces without wrongly rejecting a piece that exactly matches the board.
+    USABLE_W = BOARD_W + GAP
+    USABLE_H = BOARD_H + GAP
+    BOARD_AREA = BOARD_W * BOARD_H
+
+    # ---------------------------------------------------------
+    # GRAPHICS INPUT
+    # ---------------------------------------------------------
+    st.sidebar.header("Graphics")
+    g_count = st.sidebar.number_input("Number of different graphics", 1, 50, 3)
+
+    r_jobs = []
+    for i in range(1, g_count + 1):
+        st.sidebar.markdown(f"### Graphic {i}")
+        gw = st.sidebar.number_input(f"Width {i} (cm)", 0.0, key=f"rgw{i}")
+        gh = st.sidebar.number_input(f"Height {i} (cm)", 0.0, key=f"rgh{i}")
+        gq = st.sidebar.number_input(f"Qty {i}", min_value=0.0, value=0.0, step=1.0, key=f"rgq{i}")
+        if gw > 0 and gh > 0 and gq > 0:
+            r_jobs.append((i, gw, gh, int(round(gq))))
+
+    # ---------------------------------------------------------
+    # HELPERS
+    # ---------------------------------------------------------
+    def orientations_for(w, h):
+        outs = [(w, h)]
+        if R_AUTO_ROTATE and abs(w - h) > 1e-9:
+            outs.append((h, w))
+        return outs
+
+    def fits_board(w, h):
+        for ow, oh in orientations_for(w, h):
+            if ow <= BOARD_W + 1e-9 and oh <= BOARD_H + 1e-9:
+                return True
+        return False
+
+    def board_used_area(board):
+        return sum(ow * oh for _, _, _, ow, oh in board["placed"])
+
+    # ---------------------------------------------------------
+    # MAXRECTS PACKER  (column-first, gap-filling, rotation-aware)
+    # Tracks every free rectangle — including enclosed voids — so small / rotated
+    # pieces fill the gaps the big ones leave. Placement is column-first (leftmost
+    # x, then snug width) so columns fill the full 120 cm height before moving
+    # right → the layout also maps onto the 127 cm sticker roll.
+    # ---------------------------------------------------------
+    _MAX_FREE = 200  # cap free-rect list to keep big jobs fast
+
+    def _mr_split(free, px, py, pw, ph):
+        """Split every free rect overlapping the placed slot into maximal sub-rects."""
+        res = []
+        for fx, fy, fw, fh in free:
+            if px >= fx + fw or px + pw <= fx or py >= fy + fh or py + ph <= fy:
+                res.append((fx, fy, fw, fh))
+                continue
+            if fx < px:
+                res.append((fx, fy, px - fx, fh))
+            if fx + fw > px + pw:
+                res.append((px + pw, fy, fx + fw - (px + pw), fh))
+            if fy < py:
+                res.append((fx, fy, fw, py - fy))
+            if fy + fh > py + ph:
+                res.append((fx, py + ph, fw, fy + fh - (py + ph)))
+        pruned = []
+        for i, (ax, ay, aw, ah) in enumerate(res):
+            if aw <= 1e-9 or ah <= 1e-9:
+                continue
+            if any(bx <= ax + 1e-9 and by <= ay + 1e-9
+                   and bx + bw >= ax + aw - 1e-9 and by + bh >= ay + ah - 1e-9
+                   for j, (bx, by, bw, bh) in enumerate(res) if j != i):
+                continue
+            pruned.append((ax, ay, aw, ah))
+        if len(pruned) > _MAX_FREE:
+            pruned.sort(key=lambda r: r[2] * r[3], reverse=True)
+            pruned = pruned[:_MAX_FREE]
+        return pruned
+
+    def _mr_best(free, w, h):
+        """Best slot in one board's free rects. Column-first: leftmost x, then the
+        snuggest width fit (fills narrow gaps), then topmost. Tries both rotations."""
+        best = None
+        for fx, fy, fw, fh in free:
+            for ow, oh in orientations_for(w, h):
+                sw, sh = ow + GAP, oh + GAP
+                if sw <= fw + 1e-9 and sh <= fh + 1e-9:
+                    score = (round(fx, 3), round(fw - sw, 3), round(fy, 3))
+                    if best is None or score < best[0]:
+                        best = (score, fx, fy, ow, oh, sw, sh)
+        return best
+
+    def pack_boards(pieces):
+        # Largest pieces first set the layout; smaller / rotated ones fill the gaps.
+        order = sorted(pieces, key=lambda p: (max(p[1], p[2]), p[1] * p[2]), reverse=True)
+        boards = []
+
+        for pid, w, h in order:
+            placed_ok = False
+            # Fill existing boards (board 1 fully) before opening a new one.
+            for b in boards:
+                r = _mr_best(b["free"], w, h)
+                if r is not None:
+                    _, fx, fy, ow, oh, sw, sh = r
+                    b["placed"].append((pid, fx, fy, ow, oh))
+                    b["free"] = _mr_split(b["free"], fx, fy, sw, sh)
+                    placed_ok = True
+                    break
+            if placed_ok:
+                continue
+            b = {"free": [(0.0, 0.0, USABLE_W, USABLE_H)], "placed": []}
+            boards.append(b)
+            r = _mr_best(b["free"], w, h)
+            if r is not None:
+                _, fx, fy, ow, oh, sw, sh = r
+                b["placed"].append((pid, fx, fy, ow, oh))
+                b["free"] = _mr_split(b["free"], fx, fy, sw, sh)
+
+        return [b for b in boards if b["placed"]]
+
+    def additional_capacity(boards, w, h):
+        """How many more w×h pieces fit into the existing boards' empty space
+        (no new board). Used to suggest topping up the leftover."""
+        total = 0
+        for b in boards:
+            free = list(b["free"])
+            while True:
+                r = _mr_best(free, w, h)
+                if r is None:
+                    break
+                _, fx, fy, ow, oh, sw, sh = r
+                free = _mr_split(free, fx, fy, sw, sh)
+                total += 1
+        return total
+
+    # ---------------------------------------------------------
+    # RUN
+    # ---------------------------------------------------------
+    if st.button("Run Rigid Board Optimizer"):
+        if not r_jobs:
+            st.error("❌ Add at least one graphic with width, height and quantity.")
+            st.stop()
+
+        pieces = []
+        oversized = []
+        for pid, w, h, q in r_jobs:
+            if not fits_board(w, h):
+                oversized.append((pid, w, h))
+                continue
+            for _ in range(q):
+                pieces.append((pid, w, h))
+
+        if oversized:
+            txt = ", ".join(f"#{pid} ({w:.0f}×{h:.0f})" for pid, w, h in oversized)
+            st.warning(
+                f"⚠️ These graphics are bigger than the {BOARD_W:.0f}×{BOARD_H:.0f} cm board "
+                f"and were skipped: {txt}. Split them into tiles first, or tell me to add "
+                f"board-tiling for oversized graphics."
+            )
+
+        if not pieces:
+            st.error("❌ No graphics fit the board.")
+            st.stop()
+
+        boards = pack_boards(pieces)
+
+        # ----- Summary -----
+        n_boards = len(boards)
+        total_pieces = sum(len(b["placed"]) for b in boards)
+        used_area = sum(board_used_area(b) for b in boards)
+        total_area = n_boards * BOARD_AREA
+        util = (used_area / total_area * 100) if total_area else 0
+
+        st.success(
+            f"✅ Needs {n_boards} board(s) of {BOARD_W:.0f}×{BOARD_H:.0f} cm  •  "
+            f"{total_pieces} pieces placed  •  {util:.1f}% material used"
+        )
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Boards required", n_boards)
+        c2.metric("Pieces placed", total_pieces)
+        c3.metric("Avg utilization", f"{util:.1f}%")
+
+        # ----- Per-graphic count check -----
+        counts = {}
+        for b in boards:
+            for pid, _, _, _, _ in b["placed"]:
+                counts[pid] = counts.get(pid, 0) + 1
+        summary_df = pd.DataFrame(
+            [(pid, w, h, q, counts.get(pid, 0)) for pid, w, h, q in r_jobs],
+            columns=["Graphic", "Width", "Height", "Qty Requested", "Qty Placed"]
+        )
+        st.dataframe(summary_df, use_container_width=True)
+
+        # ----- Fill-the-leftover suggestion -----
+        # How many more of each graphic would fit into the empty space that's
+        # already paid for (no extra board), so the wasted area becomes free output.
+        free_area = total_area - used_area
+        if free_area > BOARD_AREA * 0.02:  # only worth suggesting if there's real space
+            extra = [
+                (pid, w, h, additional_capacity(boards, w, h))
+                for pid, w, h, _ in r_jobs
+            ]
+            extra = [e for e in extra if e[3] > 0]
+            if extra:
+                st.markdown("#### 💡 Fill the leftover — free extra pieces (no new board)")
+                st.caption(
+                    f"{free_area:,.0f} cm² of empty space is already on these boards. "
+                    "You could add up to:"
+                )
+                fill_df = pd.DataFrame(
+                    [(f"Graphic {pid}", f"{w:.0f}×{h:.0f}", f"+{n}") for pid, w, h, n in extra],
+                    columns=["Graphic", "Size (cm)", "Extra pieces that fit free"],
+                )
+                st.dataframe(fill_df, use_container_width=True, hide_index=True)
+
+        # ----- Visualization (2 boards per row) -----
+        MAX_SHOW = 24
+        colors = {}
+        show = boards[:MAX_SHOW]
+        for bidx, board in enumerate(show):
+            with st.container():
+                fig, ax = plt.subplots(figsize=(14, 14 * BOARD_H / BOARD_W))
+                used = board_used_area(board)
+                ax.set_title(f"Board {bidx + 1} — {used / BOARD_AREA * 100:.1f}% used", fontsize=10)
+
+                for pid, x, y, w, h in board["placed"]:
+                    if pid not in colors:
+                        colors[pid] = (
+                            random.random() * 0.7 + 0.15,
+                            random.random() * 0.7 + 0.15,
+                            random.random() * 0.7 + 0.15,
+                        )
+                    ax.add_patch(plt.Rectangle((x, y), w, h,
+                                               facecolor=colors[pid],
+                                               edgecolor="black", linewidth=1))
+                    ax.text(x + w / 2, y + h / 2, f"{pid}\n{w:.0f}×{h:.0f}",
+                            ha="center", va="center", fontsize=7, weight="bold")
+
+                ax.set_xlim(0, BOARD_W)
+                ax.set_ylim(0, BOARD_H)
+                ax.set_aspect("equal")
+                ax.invert_yaxis()  # origin top-left, like a real sheet
+                ax.set_xlabel("Width (cm)")
+                ax.set_ylabel("Height (cm)")
+                st.pyplot(fig)
+                plt.close(fig)
+
+        if n_boards > MAX_SHOW:
+            st.info(f"… {n_boards - MAX_SHOW} more board(s) calculated but not drawn.")
