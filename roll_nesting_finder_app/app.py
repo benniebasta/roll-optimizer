@@ -32,46 +32,75 @@ st.sidebar.divider()
 # ============================================================
 if page == "Roll Finder":
     st.header("📏 Material Width Optimizer")
+    st.caption("Finds the best roll width — using only the widths your material actually comes in.")
 
-    w = st.number_input("Artwork Width (cm)", min_value=1.0)
-    h = st.number_input("Artwork Height (cm)", min_value=1.0)
+    c1, c2 = st.columns(2)
+    w = c1.number_input("Artwork Width (cm)", min_value=1.0)
+    h = c2.number_input("Artwork Height (cm)", min_value=1.0)
 
-    def find_top10(art_w, art_h):
-        results = []
-        for roll in ROLL_WIDTHS:
+    st.sidebar.header("⚙️ Available Widths")
+    st.sidebar.caption("Not every material comes in every width — keep only the ones you actually have.")
+    selected = st.sidebar.multiselect(
+        "Standard widths (cm)",
+        options=ROLL_WIDTHS,
+        default=ROLL_WIDTHS,
+    )
+    custom_txt = st.sidebar.text_input(
+        "Add custom widths (cm)",
+        placeholder="e.g. 130, 145",
+        help="Comma-separated. Use this for widths not in the standard list.",
+    )
+    custom = []
+    for part in custom_txt.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            v = float(part)
+            if v > 0:
+                custom.append(v)
+        except ValueError:
+            st.sidebar.warning(f"⚠️ Ignored invalid width: “{part}”")
 
-            # Normal orientation
-            if art_w <= roll:
-                used = roll * art_h
-                real = art_w * art_h
-                waste = used - real
-                results.append((roll, "Normal", art_h, waste))
-
-            # Rotated 90°
-            if art_h <= roll:
-                used = roll * art_w
-                real = art_w * art_h
-                waste = used - real
-                results.append((roll, "Rotated 90°", art_w, waste))
-
-        results.sort(key=lambda x: (x[3], x[0]))
-        return results[:10]
+    available = sorted(set(selected) | set(custom))
 
     if st.button("Find Best Roll Width"):
-        top10 = find_top10(w, h)
+        if w <= 0 or h <= 0:
+            st.error("❌ Enter the artwork width and height.")
+            st.stop()
+        if not available:
+            st.error("❌ Select or enter at least one available roll width.")
+            st.stop()
 
-        if not top10:
-            st.error("❌ This artwork does not fit any roll.")
-        else:
-            df = pd.DataFrame(top10, columns=[
-                "Roll Width (cm)",
-                "Orientation",
-                "Used Length (cm)",
-                "Waste Area (cm²)"
-            ])
-            st.dataframe(df, use_container_width=True)
+        results = []
+        for roll in available:
+            real = w * h
+            if w <= roll:  # Normal orientation
+                results.append((roll, "Normal", h, roll * h - real))
+            if h <= roll:  # Rotated 90°
+                results.append((roll, "Rotated 90°", w, roll * w - real))
+        results.sort(key=lambda x: (x[3], x[0]))
 
-            st.info("👉 Pick the best Roll Width and use it in the RIP Optimizer page.")
+        if not results:
+            widths_txt = ", ".join(f"{r:.0f}" for r in available)
+            st.error(
+                f"❌ This artwork ({w:.0f}×{h:.0f} cm) doesn't fit any of your widths "
+                f"({widths_txt} cm). Add a wider roll or tile the artwork."
+            )
+            st.stop()
+
+        best = results[0]
+        st.success(
+            f"✅ Best roll width: **{best[0]:.0f} cm**  ·  {best[1]}  ·  "
+            f"{best[2]:.1f} cm used length  ·  {best[3]:,.0f} cm² waste"
+        )
+
+        if len(results) > 1:
+            with st.expander("Compare all your available widths"):
+                df = pd.DataFrame(results, columns=[
+                    "Roll Width (cm)", "Orientation", "Used Length (cm)", "Waste Area (cm²)"
+                ])
+                st.dataframe(df, use_container_width=True, hide_index=True)
 
 # ============================================================
 # PAGE 2 : RIP NESTING OPTIMIZER
