@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import itertools
 import random
 
 # ===============================
@@ -112,7 +111,6 @@ elif page == "Roll Optimizer":
     st.sidebar.header("⚙️ Settings")
     ROLL_WIDTH = st.sidebar.number_input("Roll Width (cm)", value=137.0)
     OVERLAP = st.sidebar.number_input("Tile Overlap (cm)", value=1.0)
-    ITERATIONS = st.sidebar.number_input("Optimization Passes", 20, 500, 150)
 
     # ===============================
     # AUTO ROTATE TOGGLE
@@ -145,136 +143,78 @@ elif page == "Roll Optimizer":
         return None, None
 
     # =========================================
-    # GUILLOTINE PACKER  (UNCHANGED)
+    # COLUMN-FIRST PACKER  (Onyx-style)
+    # Fill each length-column across the FULL roll width, biggest pieces first;
+    # small pieces drop into the leftover. Deterministic → uniform, stable layout.
     # =========================================
-    def pack(pieces):
-        free = [(0, 0, ROLL_WIDTH, 10000)]
-        placed = []
+    def _mr_split(free, px, py, pw, ph):
+        """MaxRects: split every free rect overlapping the placed slot into sub-rects."""
+        res = []
+        for fx, fy, fw, fh in free:
+            if px >= fx + fw or px + pw <= fx or py >= fy + fh or py + ph <= fy:
+                res.append((fx, fy, fw, fh)); continue
+            if fx < px:
+                res.append((fx, fy, px - fx, fh))
+            if fx + fw > px + pw:
+                res.append((px + pw, fy, fx + fw - (px + pw), fh))
+            if fy < py:
+                res.append((fx, fy, fw, py - fy))
+            if fy + fh > py + ph:
+                res.append((fx, py + ph, fw, fy + fh - (py + ph)))
+        pruned = []
+        for i, (ax, ay, aw, ah) in enumerate(res):
+            if aw <= 1e-9 or ah <= 1e-9:
+                continue
+            if any(bx <= ax + 1e-9 and by <= ay + 1e-9
+                   and bx + bw >= ax + aw - 1e-9 and by + bh >= ay + ah - 1e-9
+                   for j, (bx, by, bw, bh) in enumerate(res) if j != i):
+                continue
+            pruned.append((ax, ay, aw, ah))
+        if len(pruned) > 200:
+            pruned.sort(key=lambda r: r[2] * r[3], reverse=True)
+            pruned = pruned[:200]
+        return pruned
 
-        for p in pieces:
-            best = None
-            for fx, fy, fw, fh in free:
-                for w, h in p["orientations"]:
-                    if w <= fw and h <= fh:
-                        waste = fw * fh - w * h
-                        if not best or waste < best[0]:
-                            best = (waste, fx, fy, fw, fh, w, h)
+    def _roll_best(free, opts):
+        """Column-first slot: leftmost length, then topmost across-width, then snug."""
+        best = None
+        for fx, fy, fw, fh in free:
+            for pl, pw in opts:          # pl = along-length, pw = across-width
+                if pl <= fw + 1e-9 and pw <= fh + 1e-9:
+                    score = (round(fx, 3), round(fy, 3), round(fw - pl, 3))
+                    if best is None or score < best[0]:
+                        best = (score, fx, fy, pl, pw)
+        return best
 
-            if not best:
-                return None
-
-            _, fx, fy, fw, fh, w, h = best
-            placed.append((p["pid"], fx, fy, w, h))
-            free.remove((fx, fy, fw, fh))
-
-            right = (fx + w, fy, fw - w, h)
-            bottom = (fx, fy + h, fw, fh - h)
-
-            if right[2] > 0 and right[3] > 0:
-                free.append(right)
-            if bottom[2] > 0 and bottom[3] > 0:
-                free.append(bottom)
-
-        return placed
-
-    def length(placed):
-        if not placed:
-            return 0
-        return max(y + h for _, _, y, _, h in placed)
-
-    # =========================================
-    # OFF PATH  (EXACT ORIGINAL LOGIC — NO ROTATION)
-    # =========================================
-    def expand(jobs):
-        pieces = []
+    def optimize_columns(jobs):
+        # tile oversize panels across the width → flat list of (pid, across, along)
+        rects = []
         for pid, w, h, q in jobs:
             tile_w, n = tile_width_only(w, ROLL_WIDTH)
             if tile_w is None:
-                return None
+                return None, None
             for _ in range(q):
                 for _ in range(n):
-                    pieces.append({
-                        "pid": pid,
-                        "orientations": [(tile_w, h)]   # fixed orientation
-                    })
-        return pieces
-
-    def optimize(pieces):
-        best_len = None
-        best_layout = None
-
-        for _ in range(ITERATIONS):
-            random.shuffle(pieces)
-            layout = pack(pieces)
-            if layout:
-                l = length(layout)
-                if not best_len or l < best_len:
-                    best_len = l
-                    best_layout = layout
-
-        return best_layout, best_len
-
-    # =========================================
-    # ON PATH  (AUTO ROTATE — searches orientations)
-    # =========================================
-    def build_groups(jobs):
-        """One group per panel, holding every orientation that physically fits the roll."""
-        groups = []
-        for pid, w, h, q in jobs:
-            tile_w, n = tile_width_only(w, ROLL_WIDTH)
-            if tile_w is None:
-                return None
-
-            # across-roll dimension must be <= ROLL_WIDTH to be valid
-            orients = [(tile_w, h)]
-            if h <= ROLL_WIDTH and abs(h - tile_w) > 1e-9:
-                orients.append((h, tile_w))   # rotated 90°
-
-            groups.append({"pid": pid, "orients": orients, "count": q * n})
-        return groups
-
-    def optimize_rotate(groups):
-        """
-        Try whole-job orientation combinations (each panel normal OR rotated),
-        pack each one, and keep the layout with the SHORTEST total fabric length.
-        Rotation is judged by real material used, not by per-piece area.
-        """
-        option_lists = [g["orients"] for g in groups]
-        all_combos = list(itertools.product(*option_lists))
-
-        # Always test the two extreme seeds, then sample the rest if there are too many.
-        seeds = [
-            tuple(opts[0] for opts in option_lists),    # all normal
-            tuple(opts[-1] for opts in option_lists),   # all rotated where possible
-        ]
-        if len(all_combos) > ITERATIONS:
-            sampled = random.sample(all_combos, int(ITERATIONS))
-            combos = list({*seeds, *sampled})
-        else:
-            combos = all_combos
-
-        passes = max(1, int(ITERATIONS) // max(1, len(combos)))
-
-        best_len = None
-        best_layout = None
-
-        for combo in combos:
-            # lock every panel to its chosen orientation for this combo
-            base = []
-            for g, (w, h) in zip(groups, combo):
-                for _ in range(g["count"]):
-                    base.append({"pid": g["pid"], "orientations": [(w, h)]})
-
-            for _ in range(passes):
-                random.shuffle(base)
-                layout = pack(base)
-                if layout:
-                    l = length(layout)
-                    if best_len is None or l < best_len:
-                        best_len = l
-                        best_layout = layout
-
-        return best_layout, best_len
+                    rects.append((pid, tile_w, h))
+        if not rects:
+            return None, None
+        # biggest first lays the columns; small pieces fill the leftover
+        order = sorted(rects, key=lambda r: (max(r[1], r[2]), r[1] * r[2]), reverse=True)
+        free = [(0.0, 0.0, 10_000_000.0, ROLL_WIDTH)]   # (Lx=length, Wy=width, Lw, Wh)
+        placed = []
+        total = 0.0
+        for pid, across, along in order:
+            opts = [(along, across)]                      # normal: length=along, width=across
+            if AUTO_ROTATE and along <= ROLL_WIDTH + 1e-9 and abs(along - across) > 1e-9:
+                opts.append((across, along))              # rotated 90°
+            b = _roll_best(free, opts)
+            if b is None:
+                return None, None
+            _, fx, fy, pl, pw = b
+            total = max(total, fx + pl)
+            placed.append((pid, fy, fx, pw, pl))          # (pid, x=across, y=along, w=across, h=along)
+            free = _mr_split(free, fx, fy, pl, pw)
+        return placed, total
 
     # =========================================
     # RUN
@@ -284,21 +224,9 @@ elif page == "Roll Optimizer":
             st.error("❌ Add at least one panel with width, height and quantity.")
             st.stop()
 
-        if AUTO_ROTATE:
-            groups = build_groups(jobs)
-            if groups is None:
-                st.error("❌ Some panels cannot fit the roll width.")
-                st.stop()
-            best, total = optimize_rotate(groups)
-        else:
-            pieces = expand(jobs)
-            if not pieces:
-                st.error("❌ Some panels cannot fit the roll width.")
-                st.stop()
-            best, total = optimize(pieces)
-
+        best, total = optimize_columns(jobs)
         if not best:
-            st.error("❌ Could not produce a layout.")
+            st.error("❌ Some panels cannot fit the roll width, even tiled.")
             st.stop()
 
         mode = "Auto Rotate ON" if AUTO_ROTATE else "Auto Rotate OFF"
